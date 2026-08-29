@@ -462,7 +462,7 @@ const port = Number(process.env.PORT || 4000);
 const mongoUri =
   process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/quiz_platform";
 
-async function connectDatabase(retries = 5) {
+export async function connectDatabase(retries = 5) {
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
       await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 10000 });
@@ -478,34 +478,38 @@ async function connectDatabase(retries = 5) {
   }
 }
 
-connectDatabase()
-  .then(() => {
-    const server = app.listen(port, () =>
-      console.log(`API listening on ${port}`),
-    );
-    server.on("error", (error) => {
-      if (error.code === "EADDRINUSE") {
-        console.error(
-          `API port ${port} is already in use. Stop the existing server or choose another PORT.`,
-        );
-        process.exit(0);
-      }
-      console.error("API server failed:", error.message);
+export { app };
+
+if (!process.env.VERCEL) {
+  connectDatabase()
+    .then(() => {
+      const server = app.listen(port, () =>
+        console.log(`API listening on ${port}`),
+      );
+      server.on("error", (error) => {
+        if (error.code === "EADDRINUSE") {
+          console.error(
+            `API port ${port} is already in use. Stop the existing server or choose another PORT.`,
+          );
+          process.exit(0);
+        }
+        console.error("API server failed:", error.message);
+        process.exit(1);
+      });
+    })
+    .catch((error) => {
+      const dnsFailure =
+        error.code === "ESERVFAIL" ||
+        error.code === "ENOTFOUND" ||
+        error.message.includes("querySrv") ||
+        error.message.includes("queryTxt") ||
+        error.message.includes("getaddrinfo");
+      console.error(
+        dnsFailure
+          ? "MongoDB Atlas DNS lookup failed. Change your Mac DNS to 1.1.1.1 or 8.8.8.8, or use Atlas's standard mongodb:// connection string instead of mongodb+srv://."
+          : "MongoDB connection failed after 5 attempts. Check the Atlas cluster hostname, IP allowlist, credentials, and network connection.",
+      );
+      console.error(error.message);
       process.exit(1);
     });
-  })
-  .catch((error) => {
-    const dnsFailure =
-      error.code === "ESERVFAIL" ||
-      error.code === "ENOTFOUND" ||
-      error.message.includes("querySrv") ||
-      error.message.includes("queryTxt") ||
-      error.message.includes("getaddrinfo");
-    console.error(
-      dnsFailure
-        ? "MongoDB Atlas DNS lookup failed. Change your Mac DNS to 1.1.1.1 or 8.8.8.8, or use Atlas's standard mongodb:// connection string instead of mongodb+srv://."
-        : "MongoDB connection failed after 5 attempts. Check the Atlas cluster hostname, IP allowlist, credentials, and network connection.",
-    );
-    console.error(error.message);
-    process.exit(1);
-  });
+}
