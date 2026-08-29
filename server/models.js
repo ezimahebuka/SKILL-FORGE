@@ -73,6 +73,8 @@ const attemptSchema = new mongoose.Schema(
     ],
     startedAt: Date,
     completedAt: Date,
+    videoUrl: String,
+    videoPublicId: String,
     status: {
       type: String,
       enum: ["in_progress", "completed"],

@@ -21,6 +21,7 @@ export default function Admin({ back }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [resultDeleteTarget, setResultDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [quizForm, setQuizForm] = useState({ title: "", description: "" });
   useEffect(() => {
     Promise.all([
       api("/admin/stats"),
@@ -83,6 +84,57 @@ export default function Admin({ back }) {
       setDeleting(false);
     }
   };
+  const createQuiz = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setMessage("");
+    try {
+      const response = await api("/admin/quizzes", {
+        method: "POST",
+        body: JSON.stringify(quizForm),
+      });
+      setQuizzes((currentQuizzes) => [response.quiz, ...currentQuizzes]);
+      setQuizForm({ title: "", description: "" });
+      setMessage("Quiz created successfully.");
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const toggleQuiz = async (quiz) => {
+    try {
+      const response = await api(`/admin/quizzes/${quiz._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !quiz.isActive }),
+      });
+      setQuizzes((currentQuizzes) =>
+        currentQuizzes.map((item) =>
+          item._id === quiz._id ? response.quiz : item,
+        ),
+      );
+    } catch (e) {
+      setMessage(e.message);
+    }
+  };
+  const updateUserStatus = async (user) => {
+    try {
+      const response = await api(`/admin/users/${user._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          isApproved: user.isApproved || !user.isApproved,
+          isDisabled: user.isApproved ? !user.isDisabled : false,
+        }),
+      });
+      setUsers((currentUsers) =>
+        currentUsers.map((item) =>
+          item._id === user._id ? response.user : item,
+        ),
+      );
+    } catch (e) {
+      setMessage(e.message);
+    }
+  };
   const createQuestion = async (event) => {
     event.preventDefault();
     setSaving(true);
@@ -135,15 +187,17 @@ export default function Admin({ back }) {
         <span className="kicker">CONTROL ROOM / ADMIN</span>
         <h1>Keep the quiz sharp.</h1>
         <nav>
-          {["overview", "users", "questions", "results"].map((item) => (
-            <button
-              className={tab === item ? "active" : ""}
-              onClick={() => setTab(item)}
-              key={item}
-            >
-              {item}
-            </button>
-          ))}
+          {["overview", "users", "quizzes", "questions", "results"].map(
+            (item) => (
+              <button
+                className={tab === item ? "active" : ""}
+                onClick={() => setTab(item)}
+                key={item}
+              >
+                {item}
+              </button>
+            ),
+          )}
         </nav>
         {message && <div className="notice">{message}</div>}
         {tab === "overview" && stats && (
@@ -170,23 +224,114 @@ export default function Admin({ back }) {
               user.email,
               user.role,
               user.isDisabled ? "Disabled" : "Active",
-              <button
-                className="table-action"
-                onClick={() => setDeleteTarget(user)}
-              >
-                Delete
-              </button>,
+              <span className="table-actions">
+                <button
+                  className="table-action"
+                  onClick={() => updateUserStatus(user)}
+                >
+                  {user.isApproved && !user.isDisabled
+                    ? "Disable"
+                    : user.isApproved
+                      ? "Enable"
+                      : "Approve"}
+                </button>
+                <button
+                  className="table-action danger"
+                  onClick={() => setDeleteTarget(user)}
+                >
+                  Delete
+                </button>
+              </span>,
             ])}
           />
         )}
+        {tab === "quizzes" && (
+          <div className="quiz-admin">
+            <form className="panel admin-form" onSubmit={createQuiz}>
+              <h2>Create a quiz</h2>
+              <label>
+                Title
+                <input
+                  required
+                  value={quizForm.title}
+                  onChange={(event) =>
+                    setQuizForm({ ...quizForm, title: event.target.value })
+                  }
+                  placeholder="e.g. HTML Foundations"
+                />
+              </label>
+              <label>
+                Description
+                <textarea
+                  required
+                  value={quizForm.description}
+                  onChange={(event) =>
+                    setQuizForm({
+                      ...quizForm,
+                      description: event.target.value,
+                    })
+                  }
+                  placeholder="What will participants learn?"
+                />
+              </label>
+              <button className="button" disabled={saving}>
+                {saving ? "Creating..." : "Create quiz →"}
+              </button>
+            </form>
+            <Table
+              headers={[
+                "Quiz",
+                "Description",
+                "Questions",
+                "Status",
+                "Actions",
+              ]}
+              rows={quizzes.map((quiz) => [
+                quiz.title,
+                quiz.description,
+                questions.filter(
+                  (question) =>
+                    String(question.quizId?._id || question.quizId) ===
+                    String(quiz._id),
+                ).length,
+                quiz.isActive ? "Active" : "Inactive",
+                <button
+                  className="table-action"
+                  onClick={() => toggleQuiz(quiz)}
+                >
+                  {quiz.isActive ? "Deactivate" : "Activate"}
+                </button>,
+              ])}
+            />
+          </div>
+        )}
         {tab === "results" && (
           <Table
-            headers={["User", "Quiz", "Score", "Completed", "Actions"]}
+            headers={[
+              "User",
+              "Quiz",
+              "Score",
+              "Completed",
+              "Recording",
+              "Actions",
+            ]}
             rows={results.map((item) => [
               item.userId?.fullName,
               item.quizId?.title,
               `${item.correctAnswers} / ${item.totalQuestions} (${item.percentage}%)`,
               new Date(item.completedAt).toLocaleDateString(),
+              item.videoUrl ? (
+                <a
+                  className="table-action"
+                  href={item.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Watch
+                </a>
+              ) : (
+                "Not available"
+              ),
               <button
                 className="table-action"
                 onClick={() => setResultDeleteTarget(item)}

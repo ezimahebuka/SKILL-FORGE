@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import { parse } from "csv-parse/sync";
 import mongoose from "mongoose";
+import { v2 as cloudinary } from "cloudinary";
 import { User, ApprovedEmail, Quiz, Question, Attempt } from "./models.js";
 
 const app = express();
@@ -37,6 +38,11 @@ const publicUser = (user) => ({
   fullName: user.fullName,
   email: user.email,
   role: user.role,
+});
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 function auth(req, res, next) {
@@ -163,6 +169,23 @@ app.post("/api/quizzes/:id/start", auth, async (req, res) => {
     .select("-correctAnswer")
     .lean();
   res.json({ attemptId: attempt._id, quiz, questions });
+});
+app.post("/api/uploads/video-signature", auth, async (req, res) => {
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET)
+    return res.status(503).json({ message: "Video storage is not configured." });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = `skillforge/attempts/${req.user.id}`;
+  const signature = cloudinary.utils.api_sign_request({ folder, timestamp, resource_type: "video" }, process.env.CLOUDINARY_API_SECRET);
+  res.json({ cloudName: process.env.CLOUDINARY_CLOUD_NAME, apiKey: process.env.CLOUDINARY_API_KEY, timestamp, folder, signature });
+});
+app.patch("/api/quizzes/:id/attempts/:attemptId/video", auth, async (req, res) => {
+  const attempt = await Attempt.findOneAndUpdate(
+    { _id: req.params.attemptId, quizId: req.params.id, userId: req.user.id, status: "completed" },
+    { videoUrl: req.body.videoUrl, videoPublicId: req.body.videoPublicId },
+    { new: true },
+  );
+  if (!attempt) return res.status(404).json({ message: "Completed attempt not found." });
+  res.json({ videoUrl: attempt.videoUrl });
 });
 app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
   const attempt = await Attempt.findOne({

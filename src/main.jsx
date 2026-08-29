@@ -20,6 +20,8 @@ function App() {
   const [dashboardQuiz, setDashboardQuiz] = useState(null);
   const [quiz, setQuiz] = useState(null);
   const [result, setResult] = useState(null);
+  const [recordingStreams, setRecordingStreams] = useState(null);
+  const [recordingError, setRecordingError] = useState("");
   const [authChecked, setAuthChecked] = useState(false);
   const [path, setPath] = useState(window.location.pathname);
   const navigate = (nextPath) => {
@@ -63,21 +65,81 @@ function App() {
     navigate("/dashboard");
   };
   const start = async () => {
-    const quizToStart = dashboardQuiz || (await api("/quizzes")).quizzes[0];
-    if (!quizToStart) return;
-    setQuiz(await api(`/quizzes/${quizToStart._id}/start`, { method: "POST" }));
-    navigate("/quiz");
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      let screen;
+      try {
+        screen = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+      } catch (error) {
+        camera.getTracks().forEach((track) => track.stop());
+        throw error;
+      }
+      const quizToStart = dashboardQuiz || (await api("/quizzes")).quizzes[0];
+      if (!quizToStart) return;
+      setRecordingError("");
+      setRecordingStreams({ camera, screen });
+      setQuiz(
+        await api(`/quizzes/${quizToStart._id}/start`, { method: "POST" }),
+      );
+      navigate("/quiz");
+    } catch {
+      setRecordingError(
+        "Camera and screen permission are required to start this quiz.",
+      );
+    }
   };
-  const finish = async (attemptId, answers) => {
+  const finish = async (attemptId, answers, recordingPromise) => {
     try {
       const response = await api(`/quizzes/${quiz.quiz._id}/submit`, {
         method: "POST",
         body: JSON.stringify({ attemptId, answers }),
       });
-      setResult((await api(`/results/${response.attemptId}`)).result);
+      const completedResult = (await api(`/results/${response.attemptId}`))
+        .result;
+      const recording = recordingPromise ? await recordingPromise : null;
+      if (recording) {
+        try {
+          const signature = await api("/uploads/video-signature");
+          const formData = new FormData();
+          formData.append("file", recording, "skillforge-quiz.webm");
+          formData.append("api_key", signature.apiKey);
+          formData.append("timestamp", signature.timestamp);
+          formData.append("folder", signature.folder);
+          formData.append("signature", signature.signature);
+          const uploadResponse = await fetch(
+            `https://api.cloudinary.com/v1_1/${signature.cloudName}/video/upload`,
+            { method: "POST", body: formData },
+          );
+          const uploaded = await uploadResponse.json();
+          if (!uploadResponse.ok)
+            throw new Error(uploaded.error?.message || "Video upload failed.");
+          await api(
+            `/quizzes/${quiz.quiz._id}/attempts/${response.attemptId}/video`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                videoUrl: uploaded.secure_url,
+                videoPublicId: uploaded.public_id,
+              }),
+            },
+          );
+        } catch (error) {
+          console.error("Quiz recording upload failed:", error.message);
+        }
+      }
+      setResult(completedResult);
       navigate(`/results/${response.attemptId}`);
     } catch {
       setQuiz(null);
+      recordingStreams?.camera.getTracks().forEach((track) => track.stop());
+      recordingStreams?.screen.getTracks().forEach((track) => track.stop());
+      setRecordingStreams(null);
       navigate("/dashboard");
     }
   };
@@ -108,7 +170,7 @@ function App() {
     );
   if (path === "/quiz")
     return quiz ? (
-      <Quiz data={quiz} finish={finish} />
+      <Quiz data={quiz} finish={finish} streams={recordingStreams} />
     ) : (
       <div className="loading">Loading quiz...</div>
     );
@@ -125,6 +187,7 @@ function App() {
       <Dashboard
         user={user}
         quiz={dashboardQuiz}
+        recordingError={recordingError}
         start={start}
         admin={() => {}}
         logout={logout}
@@ -136,6 +199,7 @@ function App() {
     <Dashboard
       user={user}
       quiz={dashboardQuiz}
+      recordingError={recordingError}
       start={start}
       admin={() => user.role === "admin" && navigate("/admin")}
       logout={logout}

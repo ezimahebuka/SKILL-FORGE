@@ -29,6 +29,10 @@ npm run seed:emails -- "person@example.com" "other@example.com"
 
 Set `BREVO_SMTP_HOST`, `BREVO_SMTP_PORT`, `BREVO_SMTP_USER`, `BREVO_SMTP_PASSWORD`, `BREVO_FROM_EMAIL`, and `BREVO_FROM_NAME` in `.env`. The result is saved before email delivery; SMTP failure is logged by the API and does not fail quiz submission.
 
+## Quiz recording
+
+Before a quiz starts, the participant must explicitly allow webcam and screen access. The app combines both streams into a WebM recording and uploads it directly to Cloudinary after submission. The result is saved even if recording or upload fails. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` in `.env` and in the Vercel project environment variables. Admins can open recordings from the **Results** tab.
+
 ## Question import
 
 Create a quiz with `POST /api/admin/quizzes`, then import `sample-questions.csv` with `POST /api/admin/questions/import` using the quiz ID. Rows are validated before insertion, so an invalid file is not partially imported.

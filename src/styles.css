@@ -476,6 +476,20 @@ header {
   color: var(--brand-navy);
   text-decoration: underline;
 }
+.table-action:visited {
+  color: var(--brand-purple);
+}
+.table-actions {
+  display: inline-flex;
+  gap: 14px;
+}
+.table-action.danger {
+  color: #b42318;
+}
+.quiz-admin {
+  display: grid;
+  gap: 18px;
+}
 .question-admin {
   display: grid;
   gap: 18px;

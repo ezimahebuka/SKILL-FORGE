@@ -1,7 +1,17 @@
+import { useState } from "react";
 import Button from "./Button";
 import Brand from "./Brand";
+import RecordingConsent from "./RecordingConsent";
 
-export default function Dashboard({ user, quiz, start, admin, logout }) {
+export default function Dashboard({
+  user,
+  quiz,
+  start,
+  admin,
+  logout,
+  recordingError,
+}) {
+  const [showConsent, setShowConsent] = useState(false);
   return (
     <main className="app-shell">
       <header>
@@ -19,6 +29,7 @@ export default function Dashboard({ user, quiz, start, admin, logout }) {
           A quick, focused challenge designed to test what you know and reveal
           what to learn next.
         </p>
+        {recordingError && <div className="notice">{recordingError}</div>}
         <div className="quiz-card">
           <div>
             <span className="label">FEATURED QUIZ</span>
@@ -33,11 +44,20 @@ export default function Dashboard({ user, quiz, start, admin, logout }) {
               </span>
             </div>
           </div>
-          <Button onClick={start}>
+          <Button onClick={() => setShowConsent(true)}>
             Start quiz <span>→</span>
           </Button>
         </div>
       </section>
+      {showConsent && (
+        <RecordingConsent
+          onCancel={() => setShowConsent(false)}
+          onContinue={() => {
+            setShowConsent(false);
+            start();
+          }}
+        />
+      )}
     </main>
   );
 }

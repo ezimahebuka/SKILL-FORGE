@@ -3,14 +3,50 @@ import Button from "./Button";
 import Brand from "./Brand";
 import ExitQuizModal from "./ExitQuizModal";
 
-export default function Quiz({ data, finish }) {
+export default function Quiz({ data, finish, streams }) {
   const [index, setIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [answers, setAnswers] = useState([]);
   const [seconds, setSeconds] = useState(30);
   const [showExitModal, setShowExitModal] = useState(false);
   const advancing = useRef(false);
+  const recorder = useRef(null);
+  const recordingChunks = useRef([]);
+  const streamsRef = useRef(streams);
   const question = data.questions[index];
+  useEffect(() => {
+    streamsRef.current = streams;
+    if (!streams) return undefined;
+    const screenVideo = document.createElement("video");
+    const cameraVideo = document.createElement("video");
+    screenVideo.srcObject = streams.screen;
+    cameraVideo.srcObject = streams.camera;
+    screenVideo.muted = true;
+    cameraVideo.muted = true;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1280;
+    canvas.height = 720;
+    const context = canvas.getContext("2d");
+    let animationFrame;
+    const draw = () => {
+      context.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+      context.drawImage(cameraVideo, 1000, 540, 240, 160);
+      animationFrame = requestAnimationFrame(draw);
+    };
+    const begin = async () => {
+      await Promise.all([screenVideo.play(), cameraVideo.play()]);
+      draw();
+      const videoStream = canvas.captureStream(30);
+      recorder.current = new MediaRecorder(videoStream, {
+        mimeType: "video/webm",
+      });
+      recorder.current.ondataavailable = (event) =>
+        event.data.size && recordingChunks.current.push(event.data);
+      recorder.current.start(1000);
+    };
+    begin().catch(() => {});
+    return () => cancelAnimationFrame(animationFrame);
+  }, [streams]);
   useEffect(() => {
     setSeconds(30);
     setAnswer("");
@@ -32,9 +68,21 @@ export default function Quiz({ data, finish }) {
       { questionId: question._id, answer: value },
     ];
     setAnswers(next);
-    if (index === data.questions.length - 1) finish(data.attemptId, next);
+    if (index === data.questions.length - 1)
+      finish(data.attemptId, next, stopRecording());
     else setIndex(index + 1);
   };
+  const stopRecording = () =>
+    new Promise((resolve) => {
+      if (!recorder.current || recorder.current.state === "inactive")
+        return resolve(null);
+      recorder.current.onstop = () => {
+        const blob = new Blob(recordingChunks.current, { type: "video/webm" });
+        recordingChunks.current = [];
+        resolve(blob);
+      };
+      recorder.current.stop();
+    });
   const confirmExit = (event) => {
     event.preventDefault();
     setShowExitModal(true);
