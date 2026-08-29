@@ -1,0 +1,3 @@
+questionText,questionType,optionA,optionB,optionC,optionD,correctAnswer
+"What does HTML stand for?",multiple_choice,"Hyper Text Markup Language","High Text Machine Language","Home Tool Markup Language","Hyperlink Text Management Language","Hyper Text Markup Language"
+"What is the capital of Nigeria?",text,,,,,Lagos

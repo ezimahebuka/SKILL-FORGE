@@ -1,0 +1,13 @@
+<svg width="900" height="360" viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg">
+  <rect width="900" height="360" fill="#FFFFFF"/>
+
+  <g transform="translate(90,60)">
+    <path d="M120 0 L226 42 L226 128 C226 208 176 254 120 280 C64 254 14 208 14 128 L14 42 Z" fill="#1E1B4B"/>
+    <path d="M120 16 L212 50 L212 128 C212 198 168 238 120 262 C72 238 28 198 28 128 L28 50 Z" fill="#7C3AED"/>
+    <path d="M74 132 L104 164 L172 88" stroke="#FFFFFF" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="360" y="175" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="64" fill="#1E1B4B">Skill<tspan fill="#7C3AED">Forge</tspan></text>
+
+  <text x="360" y="215" font-family="Arial, Helvetica, sans-serif" font-weight="600" font-size="18" letter-spacing="4" fill="#6B7280">LEARN . TEST . GROW</text>
+</svg>

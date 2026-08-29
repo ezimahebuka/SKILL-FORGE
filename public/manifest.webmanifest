@@ -1,0 +1,19 @@
+{
+  "name": "Skill Forge",
+  "short_name": "Skill Forge",
+  "description": "Learn, test, and grow with focused knowledge quizzes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#1E1B4B",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/skillforge_icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
