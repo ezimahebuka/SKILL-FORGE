@@ -11,12 +11,25 @@ import { v2 as cloudinary } from "cloudinary";
 import { User, ApprovedEmail, Quiz, Question, Attempt } from "./models.js";
 
 const app = express();
+app.use("/api", (_, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  "http://localhost:5173",
+  "https://the-skill-forge.vercel.app",
+].filter(Boolean);
+
 app.use(
   cors({
-    origin:
-      process.env.CLIENT_URL ||
-      "http://localhost:5173" ||
-      "https://the-skill-forge.vercel.app/",
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
@@ -112,11 +125,12 @@ app.post("/api/auth/login", async (req, res) => {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     maxAge: 604800000,
+    path: "/",
   });
   res.json({ user: publicUser(user) });
 });
 app.post("/api/auth/logout", (_, res) => {
-  res.clearCookie("quiz_token");
+  res.clearCookie("quiz_token", { path: "/" });
   res.status(204).end();
 });
 app.get("/api/auth/me", auth, async (req, res) => {
@@ -171,22 +185,47 @@ app.post("/api/quizzes/:id/start", auth, async (req, res) => {
   res.json({ attemptId: attempt._id, quiz, questions });
 });
 app.post("/api/uploads/video-signature", auth, async (req, res) => {
-  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET)
-    return res.status(503).json({ message: "Video storage is not configured." });
+  if (
+    !process.env.CLOUDINARY_CLOUD_NAME ||
+    !process.env.CLOUDINARY_API_KEY ||
+    !process.env.CLOUDINARY_API_SECRET
+  )
+    return res
+      .status(503)
+      .json({ message: "Video storage is not configured." });
   const timestamp = Math.floor(Date.now() / 1000);
   const folder = `skillforge/attempts/${req.user.id}`;
-  const signature = cloudinary.utils.api_sign_request({ folder, timestamp, resource_type: "video" }, process.env.CLOUDINARY_API_SECRET);
-  res.json({ cloudName: process.env.CLOUDINARY_CLOUD_NAME, apiKey: process.env.CLOUDINARY_API_KEY, timestamp, folder, signature });
-});
-app.patch("/api/quizzes/:id/attempts/:attemptId/video", auth, async (req, res) => {
-  const attempt = await Attempt.findOneAndUpdate(
-    { _id: req.params.attemptId, quizId: req.params.id, userId: req.user.id, status: "completed" },
-    { videoUrl: req.body.videoUrl, videoPublicId: req.body.videoPublicId },
-    { new: true },
+  const signature = cloudinary.utils.api_sign_request(
+    { folder, timestamp },
+    process.env.CLOUDINARY_API_SECRET,
   );
-  if (!attempt) return res.status(404).json({ message: "Completed attempt not found." });
-  res.json({ videoUrl: attempt.videoUrl });
+  res.json({
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    timestamp,
+    folder,
+    signature,
+  });
 });
+app.patch(
+  "/api/quizzes/:id/attempts/:attemptId/video",
+  auth,
+  async (req, res) => {
+    const attempt = await Attempt.findOneAndUpdate(
+      {
+        _id: req.params.attemptId,
+        quizId: req.params.id,
+        userId: req.user.id,
+        status: "completed",
+      },
+      { videoUrl: req.body.videoUrl, videoPublicId: req.body.videoPublicId },
+      { new: true },
+    );
+    if (!attempt)
+      return res.status(404).json({ message: "Completed attempt not found." });
+    res.json({ videoUrl: attempt.videoUrl });
+  },
+);
 app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
   const attempt = await Attempt.findOne({
     _id: req.body.attemptId,
@@ -514,7 +553,7 @@ if (!process.env.VERCEL) {
           console.error(
             `API port ${port} is already in use. Stop the existing server or choose another PORT.`,
           );
-          process.exit(0);
+          process.exit(1);
         }
         console.error("API server failed:", error.message);
         process.exit(1);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "skill-forge-shell-v1";
+const CACHE_NAME = "skill-forge-shell-v2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/skillforge_icon.svg"];
 
 self.addEventListener("install", (event) => {

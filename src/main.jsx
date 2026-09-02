@@ -103,7 +103,7 @@ function App() {
       const completedResult = (await api(`/results/${response.attemptId}`))
         .result;
       const recording = recordingPromise ? await recordingPromise : null;
-      if (recording) {
+      if (recording && recording.size > 0) {
         try {
           const signature = await api("/uploads/video-signature");
           const formData = new FormData();
@@ -144,11 +144,19 @@ function App() {
     }
   };
   const logout = async () => {
-    await api("/auth/logout", { method: "POST" });
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } catch (error) {
+      console.error("Logout request failed:", error.message);
+    }
     setUser(null);
     setQuiz(null);
     setResult(null);
-    navigate("/login");
+    setRecordingStreams(null);
+    setRecordingError("");
+    setPath("/login");
+    window.history.pushState({}, "", "/login");
+    window.location.reload();
   };
   if (path === "/") return <Welcome go={(page) => navigate(`/${page}`)} />;
   if (path === "/login" || path === "/register")

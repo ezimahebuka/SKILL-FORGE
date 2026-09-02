@@ -257,6 +257,30 @@ header {
 .timer small {
   font-size: 10px;
 }
+.quiz-status {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.sharing-status {
+  color: var(--brand-purple);
+  font-size: 11px;
+  font-weight: 700;
+}
+.read-question {
+  margin: -34px 0 30px;
+  border: 0;
+  background: transparent;
+  color: var(--brand-purple);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0;
+}
+.read-question:hover {
+  color: var(--brand-navy);
+  text-decoration: underline;
+}
 .timer.warning {
   color: #c17a20;
 }

@@ -9,6 +9,7 @@ export default function Quiz({ data, finish, streams }) {
   const [answers, setAnswers] = useState([]);
   const [seconds, setSeconds] = useState(30);
   const [showExitModal, setShowExitModal] = useState(false);
+  const [isReading, setIsReading] = useState(false);
   const advancing = useRef(false);
   const recorder = useRef(null);
   const recordingChunks = useRef([]);
@@ -37,14 +38,19 @@ export default function Quiz({ data, finish, streams }) {
       await Promise.all([screenVideo.play(), cameraVideo.play()]);
       draw();
       const videoStream = canvas.captureStream(30);
-      recorder.current = new MediaRecorder(videoStream, {
-        mimeType: "video/webm",
-      });
+      const mimeType = MediaRecorder.isTypeSupported(
+        "video/webm;codecs=vp8,opus",
+      )
+        ? "video/webm;codecs=vp8,opus"
+        : "video/webm";
+      recorder.current = new MediaRecorder(videoStream, { mimeType });
       recorder.current.ondataavailable = (event) =>
         event.data.size && recordingChunks.current.push(event.data);
       recorder.current.start(1000);
     };
-    begin().catch(() => {});
+    begin().catch((error) =>
+      console.error("Quiz recorder could not start:", error),
+    );
     return () => cancelAnimationFrame(animationFrame);
   }, [streams]);
   useEffect(() => {
@@ -72,22 +78,40 @@ export default function Quiz({ data, finish, streams }) {
       finish(data.attemptId, next, stopRecording());
     else setIndex(index + 1);
   };
+  const stopMediaTracks = () => {
+    streamsRef.current?.camera?.getTracks().forEach((track) => track.stop());
+    streamsRef.current?.screen?.getTracks().forEach((track) => track.stop());
+  };
   const stopRecording = () =>
     new Promise((resolve) => {
-      if (!recorder.current || recorder.current.state === "inactive")
-        return resolve(null);
+      stopMediaTracks();
+      if (!recorder.current || recorder.current.state === "inactive") {
+        const blob = new Blob(recordingChunks.current, { type: "video/webm" });
+        recordingChunks.current = [];
+        return resolve(blob.size > 0 ? blob : null);
+      }
       recorder.current.onstop = () => {
         const blob = new Blob(recordingChunks.current, { type: "video/webm" });
         recordingChunks.current = [];
-        resolve(blob);
+        resolve(blob.size > 0 ? blob : null);
       };
       recorder.current.stop();
     });
+  const readQuestion = () => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const speech = new SpeechSynthesisUtterance(question.questionText);
+    speech.onstart = () => setIsReading(true);
+    speech.onend = () => setIsReading(false);
+    window.speechSynthesis.speak(speech);
+  };
   const confirmExit = (event) => {
     event.preventDefault();
     setShowExitModal(true);
   };
   const endQuiz = () => {
+    window.speechSynthesis?.cancel();
+    stopMediaTracks();
     window.location.href = "/";
   };
   if (!question)
@@ -96,11 +120,14 @@ export default function Quiz({ data, finish, streams }) {
     <main className="quiz">
       <header>
         <Brand onClick={confirmExit} />
-        <span
-          className={`timer ${seconds < 20 ? "warning" : ""} ${seconds < 10 ? "critical" : ""}`}
-        >
-          {String(seconds).padStart(2, "0")} <small>SEC</small>
-        </span>
+        <div className="quiz-status">
+          <span className="sharing-status">● Screen sharing active</span>
+          <span
+            className={`timer ${seconds < 20 ? "warning" : ""} ${seconds < 10 ? "critical" : ""}`}
+          >
+            {String(seconds).padStart(2, "0")} <small>SEC</small>
+          </span>
+        </div>
       </header>
       <div className="progress">
         <span
@@ -118,6 +145,9 @@ export default function Quiz({ data, finish, streams }) {
           </span>
         </div>
         <h1>{question.questionText}</h1>
+        <button className="read-question" onClick={readQuestion}>
+          {isReading ? "Reading question..." : "Read question aloud"}
+        </button>
         {question.questionType === "multiple_choice" ? (
           <div className="options">
             {question.options.map((option, optionIndex) => (
