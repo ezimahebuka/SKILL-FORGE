@@ -69,7 +69,8 @@ export default function Results({ result, back }) {
                   !item.isCorrect &&
                   item.question.correctAnswer && (
                     <p>
-                      Correct answer: <strong>{item.question.correctAnswer}</strong>
+                      Correct answer:{" "}
+                      <strong>{item.question.correctAnswer}</strong>
                     </p>
                   )}
               </article>

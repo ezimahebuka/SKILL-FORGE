@@ -352,9 +352,12 @@ app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
     correctAnswers,
     unanswered,
     pendingReview,
-    incorrectAnswers: gradedQuestions - correctAnswers - answers.filter(
-      (item) => !item.requiresManualGrading && !String(item.answer).trim(),
-    ).length,
+    incorrectAnswers:
+      gradedQuestions -
+      correctAnswers -
+      answers.filter(
+        (item) => !item.requiresManualGrading && !String(item.answer).trim(),
+      ).length,
     score: correctAnswers,
     percentage: gradedQuestions
       ? Math.round((correctAnswers / gradedQuestions) * 100)
@@ -754,9 +757,7 @@ app.post("/api/admin/questions/import", auth, admin, async (req, res) => {
     const type = isTheory
       ? "text"
       : isQuestionIdFormat
-        ? ["objective", "multiple_choice", "mcq"].includes(
-            normalizedSection,
-          )
+        ? ["objective", "multiple_choice", "mcq"].includes(normalizedSection)
           ? "multiple_choice"
           : ""
         : ["multiple_choice", "text"].includes(sectionOrType)
@@ -782,7 +783,8 @@ app.post("/api/admin/questions/import", auth, admin, async (req, res) => {
       correctAnswer =
         options[correctAnswer.toUpperCase().charCodeAt(0) - 65] || "";
     }
-    const requiresManualGrading = isTheory || (type === "text" && !correctAnswer);
+    const requiresManualGrading =
+      isTheory || (type === "text" && !correctAnswer);
     if (
       !questionText ||
       !type ||
