@@ -505,7 +505,7 @@ test("off-track submission is rejected and a valid attempt still scores", async 
   });
   assert.equal(result.response.status, 200);
   assert.equal(result.data.result.correctAnswers, 1);
-  assert.equal(result.data.result.percentage, 33);
+  assert.equal(result.data.result.percentage, 25);
   assert.equal(result.data.result.pendingReview, 1);
   assert.equal(
     result.data.result.answers.find(
