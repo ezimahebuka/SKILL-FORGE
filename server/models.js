@@ -12,7 +12,12 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ["user", "admin"], default: "user" },
+    role: {
+      type: String,
+      enum: ["user", "facilitator", "admin"],
+      default: "user",
+    },
+    track: { type: String, enum: ["frontend", "backend", "product"] },
     isApproved: { type: Boolean, default: false },
     isDisabled: { type: Boolean, default: false },
   },
@@ -35,6 +40,7 @@ const quizSchema = new mongoose.Schema(
   {
     title: String,
     description: String,
+    track: { type: String, enum: ["frontend", "backend", "product"] },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },
@@ -49,7 +55,8 @@ const questionSchema = new mongoose.Schema(
       required: true,
     },
     options: [String],
-    correctAnswer: { type: String, required: true },
+    correctAnswer: { type: String, default: "" },
+    requiresManualGrading: { type: Boolean, default: false },
     questionImage: String,
   },
   { timestamps: true },
@@ -63,6 +70,8 @@ const attemptSchema = new mongoose.Schema(
     correctAnswers: Number,
     incorrectAnswers: Number,
     unanswered: Number,
+    pendingReview: Number,
+    gradedQuestions: Number,
     percentage: Number,
     answers: [
       {

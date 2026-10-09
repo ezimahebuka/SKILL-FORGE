@@ -385,6 +385,12 @@ header {
   gap: 20px;
   margin-top: 28px;
 }
+.alert-modal p {
+  overflow-wrap: anywhere;
+}
+.alert-actions {
+  justify-content: flex-end;
+}
 .loading {
   padding: 80px;
 }
@@ -427,6 +433,9 @@ header {
 }
 .review article.incorrect {
   border-color: var(--brand-purple);
+}
+.review article.pending-review {
+  border-color: #c27a12;
 }
 .review article span {
   font:
@@ -507,6 +516,15 @@ header {
   display: inline-flex;
   gap: 14px;
 }
+.table-select {
+  max-width: 190px;
+  border: 1px solid #d7dbd5;
+  padding: 8px;
+  background: #fff;
+  color: var(--brand-navy);
+  font: inherit;
+  font-size: 12px;
+}
 .table-action.danger {
   color: #b42318;
 }
@@ -529,6 +547,12 @@ header {
   color: var(--brand-gray);
   font-size: 13px;
   margin: 0;
+}
+.csv-file-name {
+  color: var(--brand-gray);
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .admin-form a {
   color: var(--brand-purple);

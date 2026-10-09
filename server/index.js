@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "express-async-errors";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -11,6 +12,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { User, ApprovedEmail, Quiz, Question, Attempt } from "./models.js";
 
 const app = express();
+const validTracks = new Set(["frontend", "backend", "product"]);
 app.use("/api", (_, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
@@ -51,6 +53,7 @@ const publicUser = (user) => ({
   fullName: user.fullName,
   email: user.email,
   role: user.role,
+  track: user.track,
 });
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -58,18 +61,55 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
+  let claims;
   try {
-    req.user = jwt.verify(req.cookies.quiz_token, process.env.JWT_SECRET);
-    next();
+    claims = jwt.verify(req.cookies.quiz_token, process.env.JWT_SECRET);
   } catch {
-    res.status(401).json({ message: "Authentication required." });
+    return res.status(401).json({ message: "Authentication required." });
   }
+  const user = await User.findById(claims.id);
+  if (!user || user.isDisabled || !user.isApproved)
+    return res.status(401).json({ message: "Authentication required." });
+  req.user = user;
+  next();
+}
+function studentTrack(req, res) {
+  if (req.user.role === "admin") return null;
+  if (req.user.role !== "user") {
+    res.status(403).json({ message: "Student access required." });
+    return false;
+  }
+  if (!validTracks.has(req.user.track)) {
+    res.status(403).json({
+      message:
+        "Your account does not have a learning track assigned. Contact an administrator.",
+    });
+    return false;
+  }
+  return req.user.track;
 }
 function admin(req, res, next) {
-  if (req.user.role !== "admin")
-    return res.status(403).json({ message: "Administrator access required." });
+  if (!["admin", "facilitator"].includes(req.user.role))
+    return res.status(403).json({ message: "Facilitator access required." });
+  if (req.user.role === "facilitator" && !validTracks.has(req.user.track))
+    return res.status(403).json({
+      message:
+        "Your facilitator account does not have a valid learning track assigned.",
+    });
   next();
+}
+const staffTrack = (user) => (user.role === "facilitator" ? user.track : null);
+const scopedQuizFilter = (user, filter = {}) =>
+  user.role === "facilitator" ? { ...filter, track: user.track } : filter;
+const scopedStudentFilter = (user, filter = {}) =>
+  user.role === "facilitator"
+    ? { ...filter, role: "user", track: user.track }
+    : filter;
+async function canManageQuiz(user, quizId) {
+  const filter = { _id: quizId };
+  if (user.role === "facilitator") filter.track = user.track;
+  return Quiz.findOne(filter);
 }
 
 app.post("/api/auth/register", async (req, res) => {
@@ -110,7 +150,14 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 app.post("/api/auth/login", async (req, res) => {
-  const user = await User.findOne({ email: normalize(req.body.email) });
+  let user;
+  try {
+    user = await User.findOne({ email: normalize(req.body.email) });
+  } catch (error) {
+    return res.status(503).json({
+      message: "Database connection unavailable. Please retry shortly.",
+    });
+  }
   if (
     !user ||
     !(await bcrypt.compare(req.body.password || "", user.passwordHash))
@@ -144,20 +191,32 @@ app.get("/api/auth/me", auth, async (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
-app.get("/api/quizzes", auth, async (_, res) =>
-  res.json({ quizzes: await Quiz.find({ isActive: true }).lean() }),
-);
+app.get("/api/quizzes", auth, async (req, res) => {
+  const track = studentTrack(req, res);
+  if (track === false) return;
+  const filter = { isActive: true };
+  if (track) filter.track = track;
+  res.json({ quizzes: await Quiz.find(filter).lean() });
+});
 app.get("/api/quizzes/:id", auth, async (req, res) => {
-  const quiz = await Quiz.findOne({
+  const track = studentTrack(req, res);
+  if (track === false) return;
+  const filter = {
     _id: req.params.id,
     isActive: true,
-  }).lean();
+  };
+  if (track) filter.track = track;
+  const quiz = await Quiz.findOne(filter).lean();
   if (!quiz) return res.status(404).json({ message: "Quiz not found." });
   const questionCount = await Question.countDocuments({ quizId: quiz._id });
   res.json({ quiz: { ...quiz, questionCount } });
 });
 app.post("/api/quizzes/:id/start", auth, async (req, res) => {
-  const quiz = await Quiz.findOne({ _id: req.params.id, isActive: true });
+  const track = studentTrack(req, res);
+  if (track === false) return;
+  const filter = { _id: req.params.id, isActive: true };
+  if (track) filter.track = track;
+  const quiz = await Quiz.findOne(filter);
   if (!quiz) return res.status(404).json({ message: "Quiz not found." });
   const questionCount = await Question.countDocuments({ quizId: quiz._id });
   let existing = await Attempt.findOne({
@@ -185,6 +244,8 @@ app.post("/api/quizzes/:id/start", auth, async (req, res) => {
   res.json({ attemptId: attempt._id, quiz, questions });
 });
 app.post("/api/uploads/video-signature", auth, async (req, res) => {
+  const track = studentTrack(req, res);
+  if (track === false) return;
   if (
     !process.env.CLOUDINARY_CLOUD_NAME ||
     !process.env.CLOUDINARY_API_KEY ||
@@ -211,6 +272,10 @@ app.patch(
   "/api/quizzes/:id/attempts/:attemptId/video",
   auth,
   async (req, res) => {
+    const track = studentTrack(req, res);
+    if (track === false) return;
+    if (track && !(await Quiz.exists({ _id: req.params.id, track })))
+      return res.status(404).json({ message: "Completed attempt not found." });
     const attempt = await Attempt.findOneAndUpdate(
       {
         _id: req.params.attemptId,
@@ -227,6 +292,10 @@ app.patch(
   },
 );
 app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
+  const track = studentTrack(req, res);
+  if (track === false) return;
+  if (track && !(await Quiz.exists({ _id: req.params.id, track })))
+    return res.status(404).json({ message: "Quiz not found." });
   const attempt = await Attempt.findOne({
     _id: req.body.attemptId,
     userId: req.user.id,
@@ -251,6 +320,13 @@ app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
   );
   const answers = questions.map((question) => {
     const answer = submitted.get(String(question._id)) ?? "";
+    if (question.requiresManualGrading)
+      return {
+        questionId: question._id,
+        answer,
+        isCorrect: null,
+        requiresManualGrading: true,
+      };
     return {
       questionId: question._id,
       answer,
@@ -260,18 +336,28 @@ app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
     };
   });
   const correctAnswers = answers.filter((item) => item.isCorrect).length;
+  const gradedQuestions = answers.filter(
+    (item) => !item.requiresManualGrading,
+  ).length;
   const unanswered = answers.filter(
     (item) => !String(item.answer).trim(),
+  ).length;
+  const pendingReview = answers.filter(
+    (item) => item.requiresManualGrading && String(item.answer).trim(),
   ).length;
   const completion = {
     answers,
     totalQuestions: questions.length,
+    gradedQuestions,
     correctAnswers,
     unanswered,
-    incorrectAnswers: questions.length - correctAnswers - unanswered,
+    pendingReview,
+    incorrectAnswers: gradedQuestions - correctAnswers - answers.filter(
+      (item) => !item.requiresManualGrading && !String(item.answer).trim(),
+    ).length,
     score: correctAnswers,
-    percentage: questions.length
-      ? Math.round((correctAnswers / questions.length) * 100)
+    percentage: gradedQuestions
+      ? Math.round((correctAnswers / gradedQuestions) * 100)
       : 0,
     completedAt: new Date(),
     status: "completed",
@@ -291,14 +377,21 @@ app.post("/api/quizzes/:id/submit", auth, async (req, res) => {
   res.json({ attemptId: attempt._id });
 });
 app.get("/api/results/:id", auth, async (req, res) => {
-  const attempt = await Attempt.findOne({
-    _id: req.params.id,
-    userId: req.user.id,
-    status: "completed",
-  })
-    .populate("quizId", "title")
+  const filter = { _id: req.params.id, status: "completed" };
+  if (req.user.role === "user") filter.userId = req.user._id;
+  const attempt = await Attempt.findOne(filter)
+    .populate("quizId", "title track")
+    .populate("userId", "fullName email track")
     .lean();
   if (!attempt) return res.status(404).json({ message: "Result not found." });
+  if (req.user.role === "user" && attempt.quizId?.track !== req.user.track)
+    return res.status(404).json({ message: "Result not found." });
+  if (
+    req.user.role === "facilitator" &&
+    (attempt.quizId?.track !== req.user.track ||
+      attempt.userId?.track !== req.user.track)
+  )
+    return res.status(404).json({ message: "Result not found." });
   const questions = await Question.find({
     _id: { $in: attempt.answers.map((answer) => answer.questionId) },
   }).lean();
@@ -317,46 +410,98 @@ app.get("/api/results/:id", auth, async (req, res) => {
   });
 });
 
-app.get("/api/admin/stats", auth, admin, async (_, res) => {
-  const [users, attempts, questions, scores] = await Promise.all([
-    User.countDocuments(),
-    Attempt.countDocuments({ status: "completed" }),
-    Question.countDocuments(),
+app.get("/api/admin/stats", auth, admin, async (req, res) => {
+  const [students, quizzes, questionCount] = await Promise.all([
+    User.countDocuments(scopedStudentFilter(req.user, { role: "user" })),
+    Quiz.find(scopedQuizFilter(req.user)).select("_id").lean(),
+    req.user.role === "facilitator" ? 0 : Question.countDocuments(),
+  ]);
+  const quizIds = quizzes.map((quiz) => quiz._id);
+  const quizFilter =
+    req.user.role === "facilitator" ? { quizId: { $in: quizIds } } : {};
+  const userIds =
+    req.user.role === "facilitator"
+      ? await User.find(scopedStudentFilter(req.user)).distinct("_id")
+      : null;
+  const attemptFilter = {
+    status: "completed",
+    ...quizFilter,
+    ...(userIds ? { userId: { $in: userIds } } : {}),
+  };
+  const [attempts, questions, scores] = await Promise.all([
+    Attempt.countDocuments(attemptFilter),
+    req.user.role === "facilitator"
+      ? Question.countDocuments({ quizId: { $in: quizIds } })
+      : questionCount,
     Attempt.aggregate([
-      { $match: { status: "completed" } },
+      { $match: attemptFilter },
       {
         $group: {
           _id: null,
           average: { $avg: "$percentage" },
           highest: { $max: "$percentage" },
+          passed: {
+            $sum: { $cond: [{ $gte: ["$percentage", 60] }, 1, 0] },
+          },
         },
       },
     ]),
   ]);
   res.json({
     stats: {
-      users,
+      users: students,
+      students,
+      quizzes: quizzes.length,
       attempts,
       questions,
       average: Math.round(scores[0]?.average || 0),
       highest: scores[0]?.highest || 0,
+      passRate: attempts ? Math.round((scores[0]?.passed / attempts) * 100) : 0,
     },
   });
 });
-app.get("/api/admin/users", auth, admin, async (_, res) =>
+app.get("/api/admin/users", auth, admin, async (req, res) =>
   res.json({
-    users: await User.find().select("-passwordHash").sort("-createdAt").lean(),
+    users: await User.find(scopedStudentFilter(req.user))
+      .select("-passwordHash")
+      .sort("-createdAt")
+      .lean(),
   }),
 );
 app.patch("/api/admin/users/:id", auth, admin, async (req, res) => {
-  const user = await User.findByIdAndUpdate(
-    req.params.id,
-    {
-      isApproved: Boolean(req.body.isApproved),
-      isDisabled: Boolean(req.body.isDisabled),
-    },
-    { new: true },
-  ).select("-passwordHash");
+  const existing = await User.findOne(
+    scopedStudentFilter(req.user, { _id: req.params.id }),
+  );
+  if (!existing) return res.status(404).json({ message: "User not found." });
+  const updates = {};
+  if ("isApproved" in req.body)
+    updates.isApproved = Boolean(req.body.isApproved);
+  if ("isDisabled" in req.body)
+    updates.isDisabled = Boolean(req.body.isDisabled);
+  const unset = {};
+  if ("track" in req.body) {
+    if (req.user.role === "facilitator")
+      return res.status(403).json({
+        message: "Facilitators cannot change student track assignments.",
+      });
+    if (!["user", "facilitator"].includes(existing.role))
+      return res.status(400).json({
+        message: "Only students and facilitators can be assigned a track.",
+      });
+    if (req.body.track === "") unset.track = 1;
+    else if (!validTracks.has(req.body.track))
+      return res
+        .status(400)
+        .json({ message: "Select a valid learning track." });
+    else updates.track = req.body.track;
+  }
+  const update = {};
+  if (Object.keys(updates).length) update.$set = updates;
+  if (Object.keys(unset).length) update.$unset = unset;
+  const user = await User.findByIdAndUpdate(req.params.id, update, {
+    new: true,
+    runValidators: true,
+  }).select("-passwordHash");
   res.json({ user });
 });
 app.delete("/api/admin/users/:id", auth, admin, async (req, res) => {
@@ -364,9 +509,12 @@ app.delete("/api/admin/users/:id", auth, admin, async (req, res) => {
     return res
       .status(400)
       .json({ message: "You cannot delete your own admin account." });
-  const user = await User.findById(req.params.id);
+  const user = await User.findOne(
+    scopedStudentFilter(req.user, { _id: req.params.id }),
+  );
   if (!user) return res.status(404).json({ message: "User not found." });
   if (
+    req.user.role === "admin" &&
     user.role === "admin" &&
     (await User.countDocuments({ role: "admin" })) <= 1
   )
@@ -377,121 +525,325 @@ app.delete("/api/admin/users/:id", auth, admin, async (req, res) => {
   await user.deleteOne();
   res.status(204).end();
 });
-app.get("/api/admin/results", auth, admin, async (_, res) =>
+app.get("/api/admin/results", auth, admin, async (req, res) => {
+  let filter = { status: "completed" };
+  if (req.user.role === "facilitator") {
+    const [quizIds, userIds] = await Promise.all([
+      Quiz.find({ track: staffTrack(req.user) }).distinct("_id"),
+      User.find(scopedStudentFilter(req.user)).distinct("_id"),
+    ]);
+    filter = { ...filter, quizId: { $in: quizIds }, userId: { $in: userIds } };
+  }
   res.json({
-    results: await Attempt.find({ status: "completed" })
-      .populate("userId", "fullName email")
-      .populate("quizId", "title")
+    results: await Attempt.find(filter)
+      .populate("userId", "fullName email track")
+      .populate("quizId", "title track")
       .sort("-completedAt")
       .lean(),
-  }),
-);
-app.delete("/api/admin/results/:id", auth, admin, async (req, res) => {
-  const result = await Attempt.findOneAndDelete({
-    _id: req.params.id,
-    status: "completed",
   });
+});
+app.delete("/api/admin/results/:id", auth, admin, async (req, res) => {
+  const filter = { _id: req.params.id, status: "completed" };
+  if (req.user.role === "facilitator") {
+    const [quizIds, userIds] = await Promise.all([
+      Quiz.find({ track: staffTrack(req.user) }).distinct("_id"),
+      User.find(scopedStudentFilter(req.user)).distinct("_id"),
+    ]);
+    filter.quizId = { $in: quizIds };
+    filter.userId = { $in: userIds };
+  }
+  const result = await Attempt.findOneAndDelete(filter);
   if (!result) return res.status(404).json({ message: "Result not found." });
   res.status(204).end();
 });
-app.get("/api/admin/quizzes", auth, admin, async (_, res) =>
-  res.json({ quizzes: await Quiz.find().sort("-createdAt").lean() }),
-);
-app.get("/api/admin/questions", auth, admin, async (_, res) =>
+app.get("/api/admin/quizzes", auth, admin, async (req, res) =>
   res.json({
-    questions: await Question.find()
-      .populate("quizId", "title")
+    quizzes: await Quiz.find(scopedQuizFilter(req.user))
       .sort("-createdAt")
       .lean(),
   }),
 );
+app.get("/api/admin/questions", auth, admin, async (req, res) => {
+  const quizIds =
+    req.user.role === "facilitator"
+      ? await Quiz.find({ track: staffTrack(req.user) }).distinct("_id")
+      : null;
+  const filter = quizIds ? { quizId: { $in: quizIds } } : {};
+  res.json({
+    questions: await Question.find(filter)
+      .populate("quizId", "title track")
+      .sort("-createdAt")
+      .lean(),
+  });
+});
 app.post("/api/admin/quizzes", auth, admin, async (req, res) => {
+  const track = staffTrack(req.user) || req.body.track;
+  if (!validTracks.has(track))
+    return res.status(400).json({ message: "Select a valid learning track." });
+  if (
+    req.user.role === "facilitator" &&
+    "track" in req.body &&
+    req.body.track !== req.user.track
+  )
+    return res.status(403).json({
+      message: "You can only create quizzes for your assigned track.",
+    });
+  if (
+    typeof req.body.title !== "string" ||
+    !req.body.title.trim() ||
+    typeof req.body.description !== "string" ||
+    !req.body.description.trim()
+  )
+    return res
+      .status(400)
+      .json({ message: "Title and description are required." });
   const quiz = await Quiz.create({
     title: req.body.title?.trim(),
     description: req.body.description?.trim(),
+    track,
     isActive: req.body.isActive !== false,
   });
   res.status(201).json({ quiz });
 });
 app.patch("/api/admin/quizzes/:id", auth, admin, async (req, res) => {
-  res.json({
-    quiz: await Quiz.findByIdAndUpdate(req.params.id, req.body, { new: true }),
+  const existing = await canManageQuiz(req.user, req.params.id);
+  if (!existing) return res.status(404).json({ message: "Quiz not found." });
+  const updates = {};
+  let clearTrack = false;
+  if ("track" in req.body) {
+    if (req.user.role === "facilitator" && req.body.track !== req.user.track)
+      return res
+        .status(403)
+        .json({ message: "You cannot change a quiz's assigned track." });
+    if (req.body.track === "") clearTrack = true;
+    else if (!validTracks.has(req.body.track))
+      return res
+        .status(400)
+        .json({ message: "Select a valid learning track." });
+    else updates.track = req.body.track;
+  }
+  if ("title" in req.body) {
+    if (typeof req.body.title !== "string" || !req.body.title.trim())
+      return res.status(400).json({ message: "Title is required." });
+    updates.title = req.body.title.trim();
+  }
+  if ("description" in req.body) {
+    if (
+      typeof req.body.description !== "string" ||
+      !req.body.description.trim()
+    )
+      return res.status(400).json({ message: "Description is required." });
+    updates.description = req.body.description.trim();
+  }
+  if ("isActive" in req.body) {
+    if (typeof req.body.isActive !== "boolean")
+      return res
+        .status(400)
+        .json({ message: "Quiz status must be true or false." });
+    updates.isActive = req.body.isActive;
+  }
+  const nextTrack = clearTrack ? undefined : (updates.track ?? existing.track);
+  const nextIsActive = updates.isActive ?? existing.isActive;
+  if (nextIsActive && !validTracks.has(nextTrack))
+    return res.status(400).json({
+      message:
+        "Assign a learning track before activating this quiz, or deactivate it before removing its track.",
+    });
+  const update = {};
+  if (Object.keys(updates).length) update.$set = updates;
+  if (clearTrack) update.$unset = { track: 1 };
+  const quiz = await Quiz.findByIdAndUpdate(req.params.id, update, {
+    new: true,
+    runValidators: true,
   });
+  res.json({ quiz });
 });
 app.post("/api/admin/questions", auth, admin, async (req, res) => {
   if (
     !req.body.quizId ||
     !req.body.questionText ||
-    !req.body.correctAnswer ||
+    (!req.body.correctAnswer && req.body.questionType !== "text") ||
     !["multiple_choice", "text"].includes(req.body.questionType)
   )
     return res.status(400).json({
       message: "Quiz, question type, text, and correct answer are required.",
     });
-  const question = await Question.create(req.body);
+  if (!(await canManageQuiz(req.user, req.body.quizId)))
+    return res.status(404).json({ message: "Quiz not found." });
+  const question = await Question.create({
+    ...req.body,
+    correctAnswer: req.body.correctAnswer || "",
+    requiresManualGrading:
+      req.body.questionType === "text" && !req.body.correctAnswer,
+  });
   res.status(201).json({ question });
 });
-app.put("/api/admin/questions/:id", auth, admin, async (req, res) =>
-  res.json({
-    question: await Question.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    }),
-  }),
-);
+app.put("/api/admin/questions/:id", auth, admin, async (req, res) => {
+  const question = await Question.findById(req.params.id);
+  if (!question || !(await canManageQuiz(req.user, question.quizId)))
+    return res.status(404).json({ message: "Question not found." });
+  if (req.body.quizId && !(await canManageQuiz(req.user, req.body.quizId)))
+    return res.status(404).json({ message: "Quiz not found." });
+  const updated = await Question.findByIdAndUpdate(req.params.id, req.body, {
+    new: true,
+    runValidators: true,
+  });
+  res.json({ question: updated });
+});
 app.delete("/api/admin/questions/:id", auth, admin, async (req, res) => {
-  await Question.findByIdAndDelete(req.params.id);
+  const question = await Question.findById(req.params.id);
+  if (!question || !(await canManageQuiz(req.user, question.quizId)))
+    return res.status(404).json({ message: "Question not found." });
+  await question.deleteOne();
   res.status(204).end();
 });
 app.post("/api/admin/questions/import", auth, admin, async (req, res) => {
+  if (!(await canManageQuiz(req.user, req.body.quizId)))
+    return res.status(404).json({ message: "Quiz not found." });
+  if (typeof req.body.csv !== "string" || !req.body.csv.trim())
+    return res
+      .status(400)
+      .json({ message: "Choose a CSV file or paste CSV content first." });
+
+  let records;
   try {
-    const rows = parse(req.body.csv || "", {
-      columns: true,
+    records = parse(req.body.csv, {
+      columns: false,
       skip_empty_lines: true,
       trim: true,
+      bom: true,
+      relax_column_count: true,
     });
-    const errors = [];
-    const docs = [];
-    for (const [index, row] of rows.entries()) {
-      const rowNumber = index + 2;
-      const type =
-        row.questionType === "multiple_choice"
-          ? "multiple_choice"
-          : row.questionType === "text"
-            ? "text"
-            : "";
-      const options = [
-        row.optionA,
-        row.optionB,
-        row.optionC,
-        row.optionD,
-      ].filter(Boolean);
-      if (
-        !row.questionText ||
-        !type ||
-        !row.correctAnswer ||
-        (type === "multiple_choice" && options.length < 2)
-      )
-        errors.push(
-          `Row ${rowNumber}: questionText, questionType, correctAnswer, and valid options are required.`,
-        );
-      else
-        docs.push({
-          quizId: req.body.quizId,
-          questionText: row.questionText,
-          questionType: type,
-          options: type === "multiple_choice" ? options : [],
-          correctAnswer: row.correctAnswer,
-        });
-    }
-    if (errors.length)
-      return res
-        .status(400)
-        .json({ message: "No questions were imported.", errors });
-    await Question.insertMany(docs);
-    res.json({ imported: docs.length });
   } catch {
-    res.status(400).json({ message: "The CSV file could not be read." });
+    return res.status(400).json({
+      message:
+        "The CSV format could not be parsed. Check that the first row contains the required column headers.",
+    });
   }
+  const headers = records.shift()?.map((header) => header.trim());
+  if (!headers?.length)
+    return res.status(400).json({ message: "The CSV file has no header row." });
+  const headerIndexes = new Map(
+    headers.map((header, index) => [header.toLowerCase(), index]),
+  );
+  const isQuestionIdFormat = headerIndexes.has("question id");
+  const requiredHeaders = isQuestionIdFormat
+    ? ["section", "question", "option a", "option b", "correct answer"]
+    : ["questiontext", "questiontype", "optiona", "optionb", "correctanswer"];
+  const missingHeaders = requiredHeaders.filter(
+    (header) => !headerIndexes.has(header),
+  );
+  if (missingHeaders.length)
+    return res.status(400).json({
+      message: `CSV is missing required column(s): ${missingHeaders.join(", ")}.`,
+    });
+
+  const getValue = (row, header) =>
+    String(row[headerIndexes.get(header.toLowerCase())] ?? "").trim();
+  const errors = [];
+  const docs = [];
+  let manualReviewQuestions = 0;
+  for (const [index, row] of records.entries()) {
+    const rowNumber = index + 2;
+    const sectionOrType = getValue(
+      row,
+      isQuestionIdFormat ? "section" : "questionType",
+    );
+    const normalizedSection = sectionOrType.toLowerCase();
+    const isTheory = isQuestionIdFormat && normalizedSection === "theory";
+    const type = isTheory
+      ? "text"
+      : isQuestionIdFormat
+        ? ["objective", "multiple_choice", "mcq"].includes(
+            normalizedSection,
+          )
+          ? "multiple_choice"
+          : ""
+        : ["multiple_choice", "text"].includes(sectionOrType)
+          ? sectionOrType
+          : "";
+    const questionText = getValue(
+      row,
+      isQuestionIdFormat ? "question" : "questionText",
+    );
+    const options = ["a", "b", "c", "d"]
+      .map((letter) =>
+        getValue(
+          row,
+          isQuestionIdFormat ? `option ${letter}` : `option${letter}`,
+        ),
+      )
+      .filter(Boolean);
+    let correctAnswer = getValue(
+      row,
+      isQuestionIdFormat ? "correct answer" : "correctAnswer",
+    );
+    if (isQuestionIdFormat && /^[a-d]$/i.test(correctAnswer)) {
+      correctAnswer =
+        options[correctAnswer.toUpperCase().charCodeAt(0) - 65] || "";
+    }
+    const requiresManualGrading = isTheory || (type === "text" && !correctAnswer);
+    if (
+      !questionText ||
+      !type ||
+      (!requiresManualGrading && !correctAnswer) ||
+      (type === "multiple_choice" && options.length < 2)
+    )
+      errors.push(
+        `Row ${rowNumber}: questionText, questionType, correctAnswer, and valid options are required.`,
+      );
+    else {
+      if (requiresManualGrading) manualReviewQuestions += 1;
+      docs.push({
+        quizId: req.body.quizId,
+        questionText,
+        questionType: type,
+        options: type === "multiple_choice" ? options : [],
+        correctAnswer: requiresManualGrading ? "" : correctAnswer,
+        requiresManualGrading,
+      });
+    }
+  }
+  if (!records.length)
+    return res
+      .status(400)
+      .json({ message: "The CSV file contains no question rows." });
+  if (errors.length && !docs.length)
+    return res.status(400).json({
+      message: `No questions were imported. ${errors.join(" ")}`,
+      errors,
+    });
+  if (docs.length) await Question.insertMany(docs);
+  const warnings = [
+    ...(manualReviewQuestions
+      ? [
+          `${manualReviewQuestions} text/theory question(s) were imported and require manual review because no answer key was provided.`,
+        ]
+      : []),
+    ...(errors.length
+      ? [`${errors.length} invalid row(s) skipped. ${errors.join(" ")}`]
+      : []),
+  ];
+  res.json({
+    imported: docs.length,
+    skipped: errors.length,
+    requiresManualGrading: manualReviewQuestions,
+    warnings,
+  });
+});
+
+app.use((error, _req, res, _next) => {
+  console.error("API request failed:", error.message);
+  if (res.headersSent) return;
+  const databaseUnavailable =
+    error instanceof mongoose.Error ||
+    error.name?.includes("Mongo") ||
+    ["ENOTFOUND", "ESERVFAIL", "ECONNRESET", "ETIMEDOUT"].includes(error.code);
+  res.status(databaseUnavailable ? 503 : 500).json({
+    message: databaseUnavailable
+      ? "Database connection unavailable. Please retry shortly."
+      : "The server could not complete this request.",
+  });
 });
 
 async function sendResultEmail(userId, attempt) {

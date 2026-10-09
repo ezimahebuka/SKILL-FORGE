@@ -24,6 +24,7 @@ try {
       title: "Html Quiz",
       description:
         "A focused challenge covering HTML and the foundations of the web.",
+      track: "frontend",
       isActive: true,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },

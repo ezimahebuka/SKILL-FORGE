@@ -1,4 +1,4 @@
-export default [
+const frontendStudentEmails = [
   "nicholasosiokhale@gmail.com",
   "jesseadekoya229@gmail.com",
   "oma612631@gmail.com",
@@ -26,6 +26,9 @@ export default [
   "sokowonci474@gmail.com",
   "jimohtemi11@gmail.com",
   "kamsichukwu96@gmail.com",
+];
+
+const backendStudentEmails = [
   "abahvector@gmail.com",
   "adeleomotayo@gmail.com",
   "afolabirichard334@gmail.com",
@@ -54,6 +57,9 @@ export default [
   "paulegbeme3@gmail.com",
   "everistuschidubem6@gmail.com",
   "mayorogbanna@gmail.com",
+];
+
+const productStudentEmails = [
   "gboladeoyedeji@gmail.com",
   "stephendoris40@gmail.com",
   "bertillachidera@gmail.com",
@@ -78,3 +84,18 @@ export default [
   "gbadeboesther66@gmail.com",
   "kingsleykenechukwu785@gmail.com",
 ];
+
+export const studentRoster = [
+  ...frontendStudentEmails.map((email) => ({ email, track: "frontend" })),
+  ...backendStudentEmails.map((email) => ({ email, track: "backend" })),
+  ...productStudentEmails.map((email) => ({ email, track: "product" })),
+].map((student) => ({
+  ...student,
+  email: student.email.trim().toLowerCase(),
+}));
+
+export const rosterTrackCounts = {
+  frontend: frontendStudentEmails.length,
+  backend: backendStudentEmails.length,
+  product: productStudentEmails.length,
+};

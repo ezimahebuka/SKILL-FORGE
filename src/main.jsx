@@ -7,6 +7,7 @@ import Dashboard from "./components/Dashboard";
 import Quiz from "./components/Quiz";
 import Results from "./components/Results";
 import Admin from "./components/Admin";
+import { TRACK_LABELS } from "./tracks";
 import "./styles.css";
 
 if ("serviceWorker" in navigator && window.location.protocol === "http:") {
@@ -18,6 +19,7 @@ if ("serviceWorker" in navigator && window.location.protocol === "http:") {
 function App() {
   const [user, setUser] = useState(null);
   const [dashboardQuiz, setDashboardQuiz] = useState(null);
+  const [dashboardMessage, setDashboardMessage] = useState("");
   const [quiz, setQuiz] = useState(null);
   const [result, setResult] = useState(null);
   const [recordingStreams, setRecordingStreams] = useState(null);
@@ -35,20 +37,36 @@ function App() {
   }, []);
   useEffect(() => {
     if (!authChecked || !user) return;
+    setDashboardQuiz(null);
+    if (user.role !== "admin" && !TRACK_LABELS[user.track]) {
+      setDashboardMessage(
+        "Your account does not have a learning track assigned. Contact an administrator.",
+      );
+      return;
+    }
+    setDashboardMessage("");
     api("/quizzes")
       .then(async ({ quizzes }) => {
-        if (!quizzes[0]) return;
+        if (!quizzes[0]) {
+          setDashboardMessage(
+            user.role === "admin"
+              ? "There are no active quizzes yet."
+              : `There are no active ${TRACK_LABELS[user.track]} quizzes yet.`,
+          );
+          return;
+        }
         const data = await api(`/quizzes/${quizzes[0]._id}`);
         setDashboardQuiz(data.quiz);
+        setDashboardMessage("");
       })
-      .catch(() => {});
+      .catch((error) => setDashboardMessage(error.message));
   }, [authChecked, user]);
   useEffect(() => {
     api("/auth/me")
       .then((data) => {
         setUser(data.user);
         if (path === "/" || path === "/login" || path === "/register")
-          navigate("/dashboard");
+          navigate(data.user.role === "facilitator" ? "/admin" : "/dashboard");
       })
       .catch(() => {})
       .finally(() => setAuthChecked(true));
@@ -62,7 +80,7 @@ function App() {
   }, [path, authChecked, user, result]);
   const login = (loggedIn) => {
     setUser(loggedIn);
-    navigate("/dashboard");
+    navigate(loggedIn.role === "facilitator" ? "/admin" : "/dashboard");
   };
   const start = async () => {
     try {
@@ -189,12 +207,18 @@ function App() {
       <div className="loading">Loading result...</div>
     );
   if (path === "/admin")
-    return user.role === "admin" ? (
-      <Admin back={() => navigate("/dashboard")} />
+    return ["admin", "facilitator"].includes(user.role) ? (
+      <Admin
+        user={user}
+        trackName={TRACK_LABELS[user.track]}
+        back={() => navigate("/dashboard")}
+      />
     ) : (
       <Dashboard
         user={user}
         quiz={dashboardQuiz}
+        trackName={TRACK_LABELS[user.track]}
+        dashboardMessage={dashboardMessage}
         recordingError={recordingError}
         start={start}
         admin={() => {}}
@@ -207,9 +231,13 @@ function App() {
     <Dashboard
       user={user}
       quiz={dashboardQuiz}
+      trackName={TRACK_LABELS[user.track]}
+      dashboardMessage={dashboardMessage}
       recordingError={recordingError}
       start={start}
-      admin={() => user.role === "admin" && navigate("/admin")}
+      admin={() =>
+        ["admin", "facilitator"].includes(user.role) && navigate("/admin")
+      }
       logout={logout}
     />
   );

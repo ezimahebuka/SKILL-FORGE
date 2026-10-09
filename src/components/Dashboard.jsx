@@ -6,6 +6,8 @@ import RecordingConsent from "./RecordingConsent";
 export default function Dashboard({
   user,
   quiz,
+  trackName,
+  dashboardMessage,
   start,
   admin,
   logout,
@@ -18,23 +20,37 @@ export default function Dashboard({
         <Brand />
         <div className="user-chip">
           {user.fullName}
-          {user.role === "admin" && <button onClick={admin}>Admin →</button>}
+          {["admin", "facilitator"].includes(user.role) && (
+            <button onClick={admin}>
+              {user.role === "admin" ? "Admin →" : "Manage track →"}
+            </button>
+          )}
           <button onClick={logout}>Log out</button>
         </div>
       </header>
       <section className="dashboard">
-        <span className="kicker">YOUR DASHBOARD / READY?</span>
+        <span className="kicker">
+          YOUR DASHBOARD /{" "}
+          {trackName || (user.role === "admin" ? "ADMIN" : "TRACK UNASSIGNED")}
+        </span>
         <h1>One question at a time.</h1>
         <p className="lede">
           A quick, focused challenge designed to test what you know and reveal
           what to learn next.
         </p>
         {recordingError && <div className="notice">{recordingError}</div>}
+        {dashboardMessage && <div className="notice">{dashboardMessage}</div>}
         <div className="quiz-card">
           <div>
             <span className="label">FEATURED QUIZ</span>
-            <h2>{quiz?.title || "Loading quiz..."}</h2>
-            <p>{quiz?.description || "Loading quiz details..."}</p>
+            <h2>
+              {quiz?.title ||
+                (dashboardMessage ? "No quiz available" : "Loading quiz...")}
+            </h2>
+            <p>
+              {quiz?.description ||
+                (dashboardMessage ? "" : "Loading quiz details...")}
+            </p>
             <div className="stats">
               <span>
                 <b>{quiz?.questionCount ?? "-"}</b> questions
@@ -44,7 +60,7 @@ export default function Dashboard({
               </span>
             </div>
           </div>
-          <Button onClick={() => setShowConsent(true)}>
+          <Button disabled={!quiz} onClick={() => setShowConsent(true)}>
             Start quiz <span>→</span>
           </Button>
         </div>

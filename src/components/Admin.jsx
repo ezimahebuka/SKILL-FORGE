@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import Table from "./Table";
 import Brand from "./Brand";
 import ConfirmModal from "./ConfirmModal";
+import AlertModal from "./AlertModal";
+import { TRACK_LABELS, TRACK_OPTIONS } from "../tracks";
 
-export default function Admin({ back }) {
+export default function Admin({ user, trackName, back }) {
+  const isGlobalAdmin = user?.role === "admin";
+  const isFacilitator = user?.role === "facilitator";
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [results, setResults] = useState([]);
@@ -12,16 +16,24 @@ export default function Admin({ back }) {
   const [questions, setQuestions] = useState([]);
   const [tab, setTab] = useState("overview");
   const [message, setMessage] = useState("");
+  const [alertMessage, setAlertMessage] = useState("");
   const [form, setForm] = useState({
     questionType: "multiple_choice",
     options: ["", "", "", ""],
   });
   const [csv, setCsv] = useState("");
+  const [csvFileName, setCsvFileName] = useState("");
+  const [readingCsv, setReadingCsv] = useState(false);
+  const csvFileInput = useRef(null);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [resultDeleteTarget, setResultDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [quizForm, setQuizForm] = useState({ title: "", description: "" });
+  const [quizForm, setQuizForm] = useState({
+    title: "",
+    description: "",
+    track: isFacilitator ? user.track : "",
+  });
   useEffect(() => {
     Promise.all([
       api("/admin/stats"),
@@ -91,10 +103,18 @@ export default function Admin({ back }) {
     try {
       const response = await api("/admin/quizzes", {
         method: "POST",
-        body: JSON.stringify(quizForm),
+        body: JSON.stringify(
+          isGlobalAdmin
+            ? quizForm
+            : { title: quizForm.title, description: quizForm.description },
+        ),
       });
       setQuizzes((currentQuizzes) => [response.quiz, ...currentQuizzes]);
-      setQuizForm({ title: "", description: "" });
+      setQuizForm({
+        title: "",
+        description: "",
+        track: isFacilitator ? user.track : "",
+      });
       setMessage("Quiz created successfully.");
     } catch (e) {
       setMessage(e.message);
@@ -113,6 +133,38 @@ export default function Admin({ back }) {
           item._id === quiz._id ? response.quiz : item,
         ),
       );
+    } catch (e) {
+      setMessage(e.message);
+    }
+  };
+  const updateQuizTrack = async (quiz, track) => {
+    try {
+      const response = await api(`/admin/quizzes/${quiz._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ track }),
+      });
+      setQuizzes((currentQuizzes) =>
+        currentQuizzes.map((item) =>
+          item._id === quiz._id ? response.quiz : item,
+        ),
+      );
+      setMessage("Quiz learning track updated.");
+    } catch (e) {
+      setMessage(e.message);
+    }
+  };
+  const updateUserTrack = async (user, track) => {
+    try {
+      const response = await api(`/admin/users/${user._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ track }),
+      });
+      setUsers((currentUsers) =>
+        currentUsers.map((item) =>
+          item._id === user._id ? response.user : item,
+        ),
+      );
+      setMessage("Student learning track updated.");
     } catch (e) {
       setMessage(e.message);
     }
@@ -167,12 +219,45 @@ export default function Admin({ back }) {
         body: JSON.stringify({ csv, quizId: form.quizId }),
       });
       setCsv("");
-      setMessage(`${response.imported} question(s) imported successfully.`);
+      setCsvFileName("");
+      if (csvFileInput.current) csvFileInput.current.value = "";
+      setAlertMessage(
+        [
+          `${response.imported} question(s) imported successfully.`,
+          ...(response.warnings || []),
+        ].join(" "),
+      );
       await refreshQuestions();
     } catch (e) {
-      setMessage(e.message);
+      setAlertMessage(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+  const readCSVFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setAlertMessage("");
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setAlertMessage("Choose a .csv file.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 700 * 1024) {
+      setAlertMessage("CSV files must be smaller than 700 KB.");
+      event.target.value = "";
+      return;
+    }
+    setReadingCsv(true);
+    try {
+      setCsv(await file.text());
+      setCsvFileName(file.name);
+      setAlertMessage("");
+    } catch {
+      setAlertMessage("The selected CSV file could not be read.");
+      event.target.value = "";
+    } finally {
+      setReadingCsv(false);
     }
   };
   return (
@@ -184,8 +269,12 @@ export default function Admin({ back }) {
         </button>
       </header>
       <section className="admin">
-        <span className="kicker">CONTROL ROOM / ADMIN</span>
-        <h1>Keep the quiz sharp.</h1>
+        <span className="kicker">
+          {isGlobalAdmin
+            ? "CONTROL ROOM / GLOBAL ADMIN"
+            : `CONTROL ROOM / ${trackName || "TRACK UNASSIGNED"}`}
+        </span>
+        <h1>{isGlobalAdmin ? "Keep the quiz sharp." : "Track management."}</h1>
         <nav>
           {["overview", "users", "quizzes", "questions", "results"].map(
             (item) => (
@@ -203,11 +292,13 @@ export default function Admin({ back }) {
         {tab === "overview" && stats && (
           <div className="metric-grid">
             {[
-              ["Users", stats.users],
+              [isGlobalAdmin ? "Students" : "Track students", stats.students],
+              ["Active quizzes", stats.quizzes],
               ["Completed attempts", stats.attempts],
               ["Questions", stats.questions],
               ["Average score", `${stats.average}%`],
               ["Highest score", `${stats.highest}%`],
+              ["Pass rate", `${stats.passRate}%`],
             ].map((item) => (
               <div className="metric" key={item[0]}>
                 <span>{item[0]}</span>
@@ -216,32 +307,70 @@ export default function Admin({ back }) {
             ))}
           </div>
         )}
-        {tab === "users" && (
+        {tab === "users" && (isGlobalAdmin || isFacilitator) && (
           <Table
-            headers={["Name", "Email", "Role", "Status", "Actions"]}
+            headers={
+              isGlobalAdmin
+                ? [
+                    "Name",
+                    "Email",
+                    "Role",
+                    "Learning track",
+                    "Status",
+                    "Actions",
+                  ]
+                : ["Student", "Email", "Learning track", "Status"]
+            }
             rows={users.map((user) => [
               user.fullName,
               user.email,
-              user.role,
+              ...(isGlobalAdmin
+                ? [
+                    user.role,
+                    ["user", "facilitator"].includes(user.role) ? (
+                      <select
+                        className="table-select"
+                        aria-label={`Learning track for ${user.fullName}`}
+                        value={user.track || ""}
+                        onChange={(event) =>
+                          updateUserTrack(user, event.target.value)
+                        }
+                      >
+                        <option value="">Unassigned</option>
+                        {TRACK_OPTIONS.map(([value, label]) => (
+                          <option value={value} key={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      "-"
+                    ),
+                  ]
+                : [TRACK_LABELS[user.track] || "Unassigned"]),
               user.isDisabled ? "Disabled" : "Active",
-              <span className="table-actions">
-                <button
-                  className="table-action"
-                  onClick={() => updateUserStatus(user)}
-                >
-                  {user.isApproved && !user.isDisabled
-                    ? "Disable"
-                    : user.isApproved
-                      ? "Enable"
-                      : "Approve"}
-                </button>
-                <button
-                  className="table-action danger"
-                  onClick={() => setDeleteTarget(user)}
-                >
-                  Delete
-                </button>
-              </span>,
+              ...(isGlobalAdmin
+                ? [
+                    <span className="table-actions">
+                      <button
+                        className="table-action"
+                        onClick={() => updateUserStatus(user)}
+                      >
+                        {user.isApproved && !user.isDisabled
+                          ? "Disable"
+                          : user.isApproved
+                            ? "Enable"
+                            : "Approve"}
+                      </button>
+                      <button
+                        className="table-action danger"
+                        onClick={() => setDeleteTarget(user)}
+                      >
+                        Delete
+                      </button>
+                    </span>,
+                  ]
+                : []),
             ])}
           />
         )}
@@ -274,6 +403,30 @@ export default function Admin({ back }) {
                   placeholder="What will participants learn?"
                 />
               </label>
+              {isGlobalAdmin ? (
+                <label>
+                  Learning Track
+                  <select
+                    required
+                    value={quizForm.track}
+                    onChange={(event) =>
+                      setQuizForm({ ...quizForm, track: event.target.value })
+                    }
+                  >
+                    <option value="">Select learning track</option>
+                    {TRACK_OPTIONS.map(([value, label]) => (
+                      <option value={value} key={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label>
+                  Learning Track
+                  <input readOnly value={trackName || "Unassigned"} />
+                </label>
+              )}
               <button className="button" disabled={saving}>
                 {saving ? "Creating..." : "Create quiz →"}
               </button>
@@ -281,6 +434,7 @@ export default function Admin({ back }) {
             <Table
               headers={[
                 "Quiz",
+                "Learning track",
                 "Description",
                 "Questions",
                 "Status",
@@ -288,6 +442,25 @@ export default function Admin({ back }) {
               ]}
               rows={quizzes.map((quiz) => [
                 quiz.title,
+                isGlobalAdmin ? (
+                  <select
+                    className="table-select"
+                    aria-label={`Learning track for ${quiz.title}`}
+                    value={quiz.track || ""}
+                    onChange={(event) =>
+                      updateQuizTrack(quiz, event.target.value)
+                    }
+                  >
+                    <option value="">Unassigned</option>
+                    {TRACK_OPTIONS.map(([value, label]) => (
+                      <option value={value} key={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  TRACK_LABELS[quiz.track] || "Unassigned"
+                ),
                 quiz.description,
                 questions.filter(
                   (question) =>
@@ -310,7 +483,9 @@ export default function Admin({ back }) {
             headers={[
               "User",
               "Quiz",
+              "Learning track",
               "Score",
+              "Pending review",
               "Completed",
               "Recording",
               "Actions",
@@ -318,7 +493,9 @@ export default function Admin({ back }) {
             rows={results.map((item) => [
               item.userId?.fullName,
               item.quizId?.title,
-              `${item.correctAnswers} / ${item.totalQuestions} (${item.percentage}%)`,
+              TRACK_LABELS[item.quizId?.track] || "Unassigned",
+              `${item.correctAnswers} / ${item.gradedQuestions ?? item.totalQuestions} (${item.percentage}%)`,
+              item.pendingReview || 0,
               new Date(item.completedAt).toLocaleDateString(),
               item.videoUrl ? (
                 <a
@@ -332,12 +509,16 @@ export default function Admin({ back }) {
               ) : (
                 "Not available"
               ),
-              <button
-                className="table-action"
-                onClick={() => setResultDeleteTarget(item)}
-              >
-                Delete
-              </button>,
+              isGlobalAdmin ? (
+                <button
+                  className="table-action"
+                  onClick={() => setResultDeleteTarget(item)}
+                >
+                  Delete
+                </button>
+              ) : (
+                ""
+              ),
             ])}
           />
         )}
@@ -401,9 +582,11 @@ export default function Admin({ back }) {
                 </div>
               )}
               <label>
-                Correct answer
+                {form.questionType === "text"
+                  ? "Correct answer (optional for manual review)"
+                  : "Correct answer"}
                 <input
-                  required
+                  required={form.questionType === "multiple_choice"}
                   value={form.correctAnswer || ""}
                   onChange={(event) =>
                     setForm({ ...form, correctAnswer: event.target.value })
@@ -438,16 +621,38 @@ export default function Admin({ back }) {
                 </select>
               </label>
               <label>
+                Choose CSV file
+                <input
+                  ref={csvFileInput}
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={readCSVFile}
+                  aria-label="Choose a CSV file to import"
+                />
+                {csvFileName && (
+                  <span className="csv-file-name">Selected: {csvFileName}</span>
+                )}
+              </label>
+              <label>
                 CSV content
                 <textarea
-                  required
                   value={csv}
-                  onChange={(event) => setCsv(event.target.value)}
-                  placeholder="Paste CSV rows here..."
+                  onChange={(event) => {
+                    setCsv(event.target.value);
+                    setCsvFileName("");
+                  }}
+                  placeholder="Choose a CSV file or paste CSV rows here..."
                 />
               </label>
-              <button className="button" disabled={saving}>
-                {saving ? "Importing..." : "Import questions →"}
+              <button
+                className="button"
+                disabled={saving || readingCsv || !csv.trim()}
+              >
+                {readingCsv
+                  ? "Reading file..."
+                  : saving
+                    ? "Importing..."
+                    : "Import questions →"}
               </button>
             </form>
             <Table
@@ -478,6 +683,17 @@ export default function Admin({ back }) {
           onConfirm={deleteResult}
           busy={deleting}
           confirmLabel="Delete result"
+        />
+      )}
+      {alertMessage && (
+        <AlertModal
+          title={
+            alertMessage.includes("successfully")
+              ? "Import complete"
+              : "Import needs attention"
+          }
+          message={alertMessage}
+          onClose={() => setAlertMessage("")}
         />
       )}
     </main>
